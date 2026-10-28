@@ -62,6 +62,7 @@ summary{color:var(--mut);cursor:pointer;padding:6px 0}
   <div id="thumbs" class="thumbs"></div>
   <p id="estado" class="msg"></p>
   <div class="row"><button class="sec mini" id="otra">Agregar otra foto</button><button class="sec mini" id="leer">Leer de nuevo</button></div>
+  <details><summary>Ver texto leído</summary><pre id="crudo" style="white-space:pre-wrap;font-size:12px;color:var(--mut)"></pre></details>
   <label for="comercio">Comercio</label>
   <input id="comercio" list="comercios" autocomplete="off"><datalist id="comercios"><option>Liverpool<option>OXXO<option>Starbucks<option>Tim Hortons</datalist>
   <div class="row">
@@ -85,9 +86,13 @@ summary{color:var(--mut);cursor:pointer;padding:6px 0}
 
 <details>
 <summary>Ajustes de lectura</summary>
-<label for="clave">Clave de la API de Anthropic (opcional)</label>
-<input id="clave" type="password" autocomplete="off" placeholder="sk-ant-…">
-<p class="msg">Con clave, Claude lee mucho mejor el ticket, pero la foto se envía a Anthropic. Sin clave, la lectura se hace en el teléfono (menos precisa). La clave queda solo en este dispositivo.</p>
+<label for="prov">Lector con IA (opcional)</label>
+<select id="prov"><option value="">Solo en el teléfono (sin clave)</option><option value="gemini">Gemini (Google)</option><option value="claude">Claude (Anthropic)</option></select>
+<label for="clave">Clave de API</label>
+<input id="clave" type="password" autocomplete="off" placeholder="Pega aquí tu clave">
+<label for="modelo">Modelo (vacío = el predeterminado)</label>
+<input id="modelo" autocomplete="off" placeholder="gemini-2.5-flash">
+<p class="msg">Con IA, el ticket se lee mucho mejor, pero la foto se envía al proveedor que elijas. Sin clave, todo se queda en el teléfono (lectura menos precisa). La clave se guarda solo en este dispositivo.</p>
 <div class="row"><button class="sec" id="guardaClave">Guardar ajuste</button></div>
 <div class="row"><button class="danger" id="facturados">Marcar todos como facturados</button></div>
 </details>
@@ -99,40 +104,94 @@ const $=s=>document.querySelector(s);
 const db=new Promise((ok,no)=>{const r=indexedDB.open('tickets',1);r.onupgradeneeded=()=>r.result.createObjectStore('t',{keyPath:'id'});r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});
 const tx=async(m,f)=>{const d=await db;return new Promise((ok,no)=>{const t=d.transaction('t',m);const q=f(t.objectStore('t'));t.oncomplete=()=>ok(q&&q.result);t.onerror=()=>no(t.error)})};
 const all=()=>tx('readonly',s=>s.getAll()),put=r=>tx('readwrite',s=>s.put(r)),del=id=>tx('readwrite',s=>s.delete(id));
-const getKey=()=>{try{return localStorage.getItem('clave')||''}catch(e){return ''}};
+const getCfg=k=>{try{return localStorage.getItem(k)||''}catch(e){return ''}};
 let fotos=[];
 
 /* ---------- lectura de tickets ---------- */
 const MES={ENE:1,FEB:2,MAR:3,ABR:4,MAY:5,JUN:6,JUL:7,AGO:8,SEP:9,SET:9,OCT:10,NOV:11,DIC:12};
+const MARCAS=[['LIVERPOOL','Liverpool'],['OXXO','OXXO'],['STARBUCKS','Starbucks'],['TIMHORTON','Tim Hortons'],['WALMART','Walmart'],['SORIANA','Soriana'],['COSTCO','Costco'],['PEMEX','Pemex'],['SUBURBIA','Suburbia'],['COPPEL','Coppel'],['ELEVEN','7-Eleven'],['CHEDRAUI','Chedraui']];
+const pad=n=>String(n).padStart(2,'0');
+const titulo=x=>x.toLowerCase().replace(/(^|\s)\S/g,c=>c.toUpperCase()).replace(/\s+/g,' ').trim();
+
+/* Cada dato se busca junto a sus palabras clave y se valida; el lector falla seguido en letras/números sueltos. */
+function buscarComercio(t){
+  const letras=t.replace(/0/g,'O').replace(/1/g,'I').replace(/5/g,'S').replace(/[^A-Z]/g,'');
+  for(const [k,n] of MARCAS)for(const v of k.length>=8?[k,k.slice(1),k.slice(0,-1)]:[k])if(letras.includes(v))return n;
+  const m=t.match(/^[ \t]*([A-ZÁÉÍÓÚÑ&. ]{3,40}?)\s+S\.?\s?A\.?\s+(?:P\.?\s?I\.?\s+)?DE\s+C\.?\s?V/m);
+  return m?titulo(m[1].replace(/^(DISTRIBUIDORA|CADENA COMERCIAL|OPERADORA)\s+/,'')):'';
+}
+function buscarFecha(t){
+  t=t.replace(/(\d)O/g,'$10').replace(/O(\d)/g,'0$1');
+  const hoy=new Date(),limite=new Date(hoy.getTime()+864e5),c=[];
+  const add=(d,mo,y)=>{y=+y;if(y<100)y+=2000;mo=+mo;d=+d;
+    if(y<2023||y>hoy.getFullYear()+1||mo<1||mo>12||d<1||d>31)return;
+    const f=new Date(y,mo-1,d);if(f<=limite)c.push([f,`${y}-${pad(mo)}-${pad(d)}`])};
+  for(const m of t.matchAll(/(\d{1,2})\s*[\/\-.]\s*([A-Z0-9]{3})\s*[\/\-.]\s*(\d{2,4})/g)){
+    const mes=MES[m[2].replace(/0/g,'O').replace(/1/g,'I').replace(/5/g,'S')];if(mes)add(m[1],mes,m[3])}
+  for(const m of t.matchAll(/(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{4}|\d{2})\b/g))add(m[1],m[2],m[3]);
+  for(const m of t.matchAll(/\b(20\d{2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\b/g))add(m[3],m[2],m[1]);
+  c.sort((x,y)=>y[0]-x[0]);return c.length?c[0][1]:'';
+}
+function buscarFolio(t){
+  let m=t.match(/D[O0]CTO[\s\S]{0,40}?\b\d{3}\s+(\d{3,5})\s+\d{4}\b/);if(m)return m[1];
+  m=t.match(/\b(?:FOLIO|D[O0]CTO|DOCUMENTO|TICKET|TKT|TRANSACCI[OÓ]N|TRANS|ORDEN|REF(?:ERENCIA)?)\b[\s.:#NOº°]{0,8}([A-Z]?\d[\dA-Z\-]{2,})/);
+  return m?m[1]:'';
+}
+function buscarSucursal(t){
+  let m=t.match(/^[ \t]*L[I1]VERPOOL (?!ES PARTE)([A-ZÁÉÍÓÚÑ ]{3,}?)[ \t]*$/m);
+  if(m)return 'Liverpool '+titulo(m[1]);
+  m=t.match(/\b(?:SUCURSAL|SUC|TIENDA)\b[\s.:#]{0,4}([A-ZÁÉÍÓÚÑ0-9][A-ZÁÉÍÓÚÑ0-9 ]{2,35})/);
+  return m?titulo(m[1]):'';
+}
+function buscarTotal(t){
+  t=t.replace(/SUB\s*TOTAL/g,'SUB').replace(/(\d)O/g,'$10').replace(/O(\d)/g,'0$1');
+  const m=t.match(/(?:TOTAL(?: A PAGAR)?|IMPORTE|MONTO)[^0-9\n]{0,25}([\d,]+\s?\.\s?\d{2})/);
+  return m?m[1].replace(/[,\s]/g,''):'';
+}
 function parsear(texto){
   const t=texto.toUpperCase(),r={};
-  const c=t.match(/LIVERPOOL|OXXO|STARBUCKS|TIM HORTON/);
-  if(c)r.comercio={'LIVERPOOL':'Liverpool','OXXO':'OXXO','STARBUCKS':'Starbucks','TIM HORTON':'Tim Hortons'}[c[0]];
-  /* fecha: tolera errores típicos del lector (0 por O, 1 por I, 5 por S) */
-  let m=t.match(/(\d{1,2})\s*[\/\-.]\s*([A-Z0-9]{3})\s*[\/\-.]\s*([\dO]{4})/);
-  if(m){const mes=MES[m[2].replace(/0/g,'O').replace(/1/g,'I').replace(/5/g,'S')];
-    if(mes)r.fecha=`${m[3].replace(/O/g,'0')}-${String(mes).padStart(2,'0')}-${m[1].padStart(2,'0')}`}
-  if(!r.fecha&&(m=t.match(/(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{4})/)))r.fecha=`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-  m=t.match(/(\d{2}:\d{2})/);if(m)r.hora=m[1];
-  /* sucursal: línea que empieza con LIVERPOOL seguida del nombre de la tienda */
-  m=t.match(/^[ \t]*(LIVERPOOL (?!ES PARTE)[A-ZÁÉÍÓÚÑ ]{3,}?)[ \t]*$/m);
-  if(m)r.sucursal=m[1].toLowerCase().replace(/(^|\s)\S/g,x=>x.toUpperCase());
-  m=t.match(/DOCTO[\s\S]{0,40}?\b\d{3}\s+(\d{3,5})\s+\d{4}\b/);if(m)r.folio=m[1];
-  m=t.match(/TOTAL[^0-9\n]{0,20}([\d,]+\s?\.\s?\d{2})/);if(m)r.total=m[1].replace(/[,\s]/g,'');
-  m=t.match(/\b([A-Z0-9]{5})\s+([A-Z0-9]{5})\s+([A-Z0-9]{5})\s+([A-Z0-9]{5})\b/);if(m)r.codigo_facturacion=m.slice(1,5).join(' ');
+  const f={comercio:buscarComercio(t),fecha:buscarFecha(t),folio:buscarFolio(t),sucursal:buscarSucursal(t),total:buscarTotal(t)};
+  for(const k in f)if(f[k])r[k]=f[k];
+  const m=t.match(/\b([A-Z0-9]{5})\s+([A-Z0-9]{5})\s+([A-Z0-9]{5})\s+([A-Z0-9]{5})\b/);if(m)r.codigo_facturacion=m.slice(1,5).join(' ');
+  const h=t.match(/\b([01]\d|2[0-3]):[0-5]\d\b/);if(h)r.hora=h[0];
   return r;
 }
 /* más contraste y escala de grises: ayuda al lector con papel térmico */
 const realzar=u=>new Promise(ok=>{const i=new Image();i.onload=()=>{const c=document.createElement('canvas');c.width=i.width;c.height=i.height;const x=c.getContext('2d');x.drawImage(i,0,0);const d=x.getImageData(0,0,c.width,c.height),p=d.data;for(let k=0;k<p.length;k+=4){const g=.3*p[k]+.59*p[k+1]+.11*p[k+2],v=Math.max(0,Math.min(255,(g-135)*1.8+135));p[k]=p[k+1]=p[k+2]=v}x.putImageData(d,0,0);ok(c.toDataURL('image/png'))};i.src=u});
+const cargarT=()=>window.Tesseract?Promise.resolve():new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';s.onload=ok;s.onerror=()=>no(new Error('No pude cargar el lector (¿hay internet?)'));document.head.appendChild(s)});
 async function leerOCR(urls){
-  if(!window.Tesseract)await new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';s.onload=ok;s.onerror=()=>no(new Error('No pude cargar el lector (¿hay internet?)'));document.head.appendChild(s)});
-  let texto='';
-  for(const u of urls){const {data}=await Tesseract.recognize(await realzar(u),'spa');texto+='\n'+data.text}
-  return parsear(texto);
+  await cargarT();
+  const e=$('#estado'),txt={'loading tesseract core':'Preparando lector…','loading language traineddata':'Descargando idioma (solo la primera vez, puede tardar)…'};
+  const w=await Tesseract.createWorker('spa',1,{logger:m=>{if(m.status==='recognizing text')e.textContent=`Leyendo… ${Math.round((m.progress||0)*100)}%`;else if(txt[m.status])e.textContent=txt[m.status]}});
+  const r={};let crudo='';
+  try{
+    for(const u of urls){
+      const img=await realzar(u);
+      for(const psm of ['4','6']){            /* dos formas de leer el mismo ticket */
+        await w.setParameters({tessedit_pageseg_mode:psm,preserve_interword_spaces:'1'});
+        const {data}=await w.recognize(img);
+        crudo+=`--- lectura ${psm} ---\n${data.text}\n`;
+        const p=parsear(data.text);for(const k in p)if(!r[k])r[k]=p[k];
+      }
+    }
+  }finally{await w.terminate()}
+  $('#crudo').textContent=crudo;
+  return r;
+}
+const PROMPT='Lee este ticket de compra mexicano (puede venir en una o dos fotos). Responde SOLO un JSON con estas llaves: comercio (Liverpool, OXXO, Starbucks, Tim Hortons u otro), fecha (YYYY-MM-DD), hora (HH:MM), sucursal, folio, total (número con centavos, sin símbolo), codigo_facturacion (el código, folio o ID para facturar tal cual aparece, con espacios). Usa "" si algo no aparece. No inventes datos.';
+async function leerGemini(urls,clave){
+  const parts=urls.map(u=>({inline_data:{mime_type:'image/jpeg',data:u.split(',')[1]}}));
+  parts.push({text:PROMPT});
+  const modelo=getCfg('modelo')||'gemini-2.5-flash';
+  const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`,{method:'POST',headers:{'content-type':'application/json','x-goog-api-key':clave},body:JSON.stringify({contents:[{parts}],generationConfig:{responseMimeType:'application/json',temperature:0}})});
+  const j=await r.json();
+  if(!r.ok)throw new Error(j.error?.message||'Error de la API de Gemini');
+  const txt=(j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').replace(/```json|```/g,'').trim();
+  return JSON.parse(txt);
 }
 async function leerClaude(urls,clave){
   const content=urls.map(u=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:u.split(',')[1]}}));
-  content.push({type:'text',text:'Lee este ticket de compra mexicano (puede venir en una o dos fotos). Responde SOLO un JSON con estas llaves: comercio (Liverpool, OXXO, Starbucks, Tim Hortons u otro), fecha (YYYY-MM-DD), hora (HH:MM), sucursal, folio, total (número con centavos, sin símbolo), codigo_facturacion (el código, folio o ID para facturar tal cual aparece, con espacios). Usa "" si algo no aparece. No inventes datos.'});
+  content.push({type:'text',text:PROMPT});
   const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':clave,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:MODEL,max_tokens:600,messages:[{role:'user',content}]})});
   const j=await r.json();
   if(!r.ok)throw new Error(j.error?.message||'Error de la API');
@@ -144,13 +203,14 @@ async function leer(){
   const e=$('#estado');e.className='msg';e.textContent='Leyendo el ticket…';
   $('#leer').disabled=true;
   try{
-    const clave=getKey();
-    const r=clave?await leerClaude(fotos,clave):await leerOCR(fotos);
+    const clave=getCfg('clave'),prov=getCfg('prov');
+    const r=clave&&prov==='gemini'?await leerGemini(fotos,clave):clave&&prov==='claude'?await leerClaude(fotos,clave):await leerOCR(fotos);
     for(const k of ['comercio','fecha','total','codigo_facturacion','folio','sucursal']){
       const campo=k==='codigo_facturacion'?'codigo':k;
       if(r[k])$('#'+campo).value=r[k];
     }
-    e.textContent='Listo. Revisa los datos antes de guardar.';
+    const falta=[['comercio','comercio'],['fecha','fecha'],['total','total'],['codigo_facturacion','código']].filter(([k])=>!r[k]).map(x=>x[1]);
+    e.textContent=falta.length?`No encontré: ${falta.join(', ')}. Captúralo a mano y revisa lo demás.`:'Listo. Revisa los datos antes de guardar.';
   }catch(err){e.className='msg err';e.textContent='No pude leer el ticket: '+err.message+'. Captura los datos a mano.'}
   $('#leer').disabled=false;
 }
@@ -158,7 +218,7 @@ async function leer(){
 /* ---------- fotos ---------- */
 function reducir(file){
   return new Promise((ok,no)=>{const img=new Image(),u=URL.createObjectURL(file);
-    img.onload=()=>{const k=Math.min(1,1600/Math.max(img.width,img.height)),c=document.createElement('canvas');
+    img.onload=()=>{const k=Math.min(1,2200/Math.max(img.width,img.height)),c=document.createElement('canvas');
       c.width=img.width*k;c.height=img.height*k;c.getContext('2d').drawImage(img,0,0,c.width,c.height);
       URL.revokeObjectURL(u);ok(c.toDataURL('image/jpeg',.8))};
     img.onerror=()=>no(new Error('Imagen no válida'));img.src=u});
@@ -214,9 +274,9 @@ $('#exportar').onclick=async()=>{
   if(navigator.canShare&&navigator.canShare({files:[f]})){try{await navigator.share({files:[f]})}catch(e){}}
   else{const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download='tickets.json';a.click()}
 };
-$('#guardaClave').onclick=()=>{try{localStorage.setItem('clave',$('#clave').value.trim());alert('Ajuste guardado.')}catch(e){alert('No pude guardar el ajuste.')}};
+$('#guardaClave').onclick=()=>{try{for(const k of ['prov','clave','modelo'])localStorage.setItem(k,$('#'+k).value.trim());alert('Ajuste guardado.')}catch(e){alert('No pude guardar el ajuste.')}};
 $('#facturados').onclick=async()=>{if(!confirm('¿Marcar todos los pendientes como facturados?'))return;for(const t of await all()){t.estado='facturado';await put(t)}pintaLista()};
-$('#clave').value=getKey();
+for(const k of ['prov','clave','modelo'])$('#'+k).value=getCfg(k);
 pintaLista();
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
