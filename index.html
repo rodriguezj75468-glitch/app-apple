@@ -108,17 +108,26 @@ function parsear(texto){
   const t=texto.toUpperCase(),r={};
   const c=t.match(/LIVERPOOL|OXXO|STARBUCKS|TIM HORTON/);
   if(c)r.comercio={'LIVERPOOL':'Liverpool','OXXO':'OXXO','STARBUCKS':'Starbucks','TIM HORTON':'Tim Hortons'}[c[0]];
-  let m=t.match(/(\d{1,2})[\/\-. ]([A-Z]{3})[\/\-. ](\d{4})/);
-  if(m&&MES[m[2]])r.fecha=`${m[3]}-${String(MES[m[2]]).padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-  else if((m=t.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/)))r.fecha=`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-  m=t.match(/TOTAL[^0-9\n]{0,20}([\d,]+\.\d{2})/);if(m)r.total=m[1].replace(/,/g,'');
+  /* fecha: tolera errores típicos del lector (0 por O, 1 por I, 5 por S) */
+  let m=t.match(/(\d{1,2})\s*[\/\-.]\s*([A-Z0-9]{3})\s*[\/\-.]\s*([\dO]{4})/);
+  if(m){const mes=MES[m[2].replace(/0/g,'O').replace(/1/g,'I').replace(/5/g,'S')];
+    if(mes)r.fecha=`${m[3].replace(/O/g,'0')}-${String(mes).padStart(2,'0')}-${m[1].padStart(2,'0')}`}
+  if(!r.fecha&&(m=t.match(/(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{4})/)))r.fecha=`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  m=t.match(/(\d{2}:\d{2})/);if(m)r.hora=m[1];
+  /* sucursal: línea que empieza con LIVERPOOL seguida del nombre de la tienda */
+  m=t.match(/^[ \t]*(LIVERPOOL (?!ES PARTE)[A-ZÁÉÍÓÚÑ ]{3,}?)[ \t]*$/m);
+  if(m)r.sucursal=m[1].toLowerCase().replace(/(^|\s)\S/g,x=>x.toUpperCase());
+  m=t.match(/DOCTO[\s\S]{0,40}?\b\d{3}\s+(\d{3,5})\s+\d{4}\b/);if(m)r.folio=m[1];
+  m=t.match(/TOTAL[^0-9\n]{0,20}([\d,]+\s?\.\s?\d{2})/);if(m)r.total=m[1].replace(/[,\s]/g,'');
   m=t.match(/\b([A-Z0-9]{5})\s+([A-Z0-9]{5})\s+([A-Z0-9]{5})\s+([A-Z0-9]{5})\b/);if(m)r.codigo_facturacion=m.slice(1,5).join(' ');
   return r;
 }
+/* más contraste y escala de grises: ayuda al lector con papel térmico */
+const realzar=u=>new Promise(ok=>{const i=new Image();i.onload=()=>{const c=document.createElement('canvas');c.width=i.width;c.height=i.height;const x=c.getContext('2d');x.drawImage(i,0,0);const d=x.getImageData(0,0,c.width,c.height),p=d.data;for(let k=0;k<p.length;k+=4){const g=.3*p[k]+.59*p[k+1]+.11*p[k+2],v=Math.max(0,Math.min(255,(g-135)*1.8+135));p[k]=p[k+1]=p[k+2]=v}x.putImageData(d,0,0);ok(c.toDataURL('image/png'))};i.src=u});
 async function leerOCR(urls){
   if(!window.Tesseract)await new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';s.onload=ok;s.onerror=()=>no(new Error('No pude cargar el lector (¿hay internet?)'));document.head.appendChild(s)});
   let texto='';
-  for(const u of urls){const {data}=await Tesseract.recognize(u,'spa');texto+='\n'+data.text}
+  for(const u of urls){const {data}=await Tesseract.recognize(await realzar(u),'spa');texto+='\n'+data.text}
   return parsear(texto);
 }
 async function leerClaude(urls,clave){
