@@ -91,7 +91,7 @@ summary{color:var(--mut);cursor:pointer;padding:6px 0}
 <label for="clave">Clave de API</label>
 <input id="clave" type="password" autocomplete="off" placeholder="Pega aquí tu clave">
 <label for="modelo">Modelo (vacío = el predeterminado)</label>
-<input id="modelo" autocomplete="off" placeholder="gemini-2.5-flash">
+<input id="modelo" autocomplete="off" placeholder="vacío = automático">
 <p class="msg">Con IA, el ticket se lee mucho mejor, pero la foto se envía al proveedor que elijas. Sin clave, todo se queda en el teléfono (lectura menos precisa). La clave se guarda solo en este dispositivo.</p>
 <div class="row"><button class="sec" id="guardaClave">Guardar ajuste</button></div>
 <div class="row"><button class="danger" id="facturados">Marcar todos como facturados</button></div>
@@ -182,12 +182,21 @@ const PROMPT='Lee este ticket de compra mexicano (puede venir en una o dos fotos
 async function leerGemini(urls,clave){
   const parts=urls.map(u=>({inline_data:{mime_type:'image/jpeg',data:u.split(',')[1]}}));
   parts.push({text:PROMPT});
-  const modelo=getCfg('modelo')||'gemini-2.5-flash';
-  const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`,{method:'POST',headers:{'content-type':'application/json','x-goog-api-key':clave},body:JSON.stringify({contents:[{parts}],generationConfig:{responseMimeType:'application/json',temperature:0}})});
-  const j=await r.json();
-  if(!r.ok)throw new Error(j.error?.message||'Error de la API de Gemini');
-  const txt=(j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').replace(/```json|```/g,'').trim();
-  return JSON.parse(txt);
+  const elegido=getCfg('modelo');
+  /* sin modelo elegido, prueba varios: cada uno tiene su propio límite diario gratuito */
+  const modelos=elegido?[elegido]:['gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash'];
+  let ultimo;
+  for(const modelo of modelos){
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`,{method:'POST',headers:{'content-type':'application/json','x-goog-api-key':clave},body:JSON.stringify({contents:[{parts}],generationConfig:{responseMimeType:'application/json',temperature:0}})});
+    const j=await r.json();
+    if(r.ok){
+      const txt=(j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').replace(/```json|```/g,'').trim();
+      return JSON.parse(txt);
+    }
+    ultimo=new Error(j.error?.message||'Error de la API de Gemini');
+    if(![404,429].includes(r.status))break;  /* otro tipo de error: otro modelo no ayuda */
+  }
+  throw ultimo;
 }
 async function leerClaude(urls,clave){
   const content=urls.map(u=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:u.split(',')[1]}}));
@@ -204,7 +213,15 @@ async function leer(){
   $('#leer').disabled=true;
   try{
     const clave=getCfg('clave'),prov=getCfg('prov');
-    const r=clave&&prov==='gemini'?await leerGemini(fotos,clave):clave&&prov==='claude'?await leerClaude(fotos,clave):await leerOCR(fotos);
+    let r;
+    if(clave&&(prov==='gemini'||prov==='claude')){
+      try{r=prov==='gemini'?await leerGemini(fotos,clave):await leerClaude(fotos,clave)}
+      catch(err){
+        /* si la IA falla (límite diario, sin internet…), se intenta con el lector del propio teléfono */
+        e.textContent='La IA no respondió ('+String(err.message).split(/[.\n]/)[0]+'). Usando el lector del teléfono…';
+        r=await leerOCR(fotos);
+      }
+    }else r=await leerOCR(fotos);
     for(const k of ['comercio','fecha','total','codigo_facturacion','folio','sucursal']){
       const campo=k==='codigo_facturacion'?'codigo':k;
       if(r[k])$('#'+campo).value=r[k];
