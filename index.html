@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Tickets">
+<meta name="theme-color" content="#2b4acb">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Tickets para facturar</title>
+<style>
+:root{--bg:#e9edf0;--paper:#fbfbf9;--ink:#16212b;--mut:#5d6b78;--acc:#2b4acb;--line:#cfd6dc;--warn:#b45309;--ok:#15803d;--bad:#b91c1c}
+@media(prefers-color-scheme:dark){:root{--bg:#10161c;--paper:#1a232c;--ink:#e8edf1;--mut:#97a4b0;--acc:#8ea2ff;--line:#2d3944;--warn:#fbbf24;--ok:#4ade80;--bad:#f87171}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,system-ui,"Segoe UI",sans-serif;padding:max(16px,env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom))}
+main{max-width:560px;margin:0 auto}
+h1{font-size:22px;margin:4px 0 2px}
+.sub{color:var(--mut);margin:0 0 18px;font-size:14px}
+button,.btn{font:inherit;border:0;border-radius:12px;padding:13px 16px;background:var(--acc);color:#fff;font-weight:600;width:100%;cursor:pointer}
+button.sec{background:transparent;color:var(--acc);border:1.5px solid var(--acc)}
+button.mini{width:auto;padding:7px 12px;font-size:14px;border-radius:9px}
+button.danger{background:transparent;color:var(--bad);border:1.5px solid var(--line)}
+button:disabled{opacity:.5}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.row{display:flex;gap:10px;margin-top:10px}
+.row>*{flex:1}
+.paper{background:var(--paper);padding:16px;margin:16px 0;
+ -webkit-mask:radial-gradient(7px at 7px 100%,#0000 98%,#000) 0 0/14px 100%;mask:radial-gradient(7px at 7px 100%,#0000 98%,#000) 0 0/14px 100%;
+ padding-bottom:22px}
+.paper.edit{padding-top:14px}
+label{display:block;font-size:13px;color:var(--mut);margin:12px 0 4px}
+input,select{font:inherit;width:100%;padding:11px 12px;border-radius:10px;border:1.5px solid var(--line);background:var(--bg);color:var(--ink)}
+.code{letter-spacing:.06em;font-variant-numeric:tabular-nums}
+.thumbs{display:flex;gap:8px;overflow-x:auto}
+.thumbs img{height:84px;border-radius:8px;border:1px solid var(--line)}
+.msg{font-size:14px;color:var(--mut);margin:10px 0 0}
+.msg.err{color:var(--bad)}
+.item{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.item b{font-size:17px}
+.amt{font-variant-numeric:tabular-nums;font-weight:700;font-size:17px;white-space:nowrap}
+.meta{font-size:14px;color:var(--mut)}
+.chip{font-size:13px;font-weight:600}
+.chip.ok{color:var(--ok)}.chip.warn{color:var(--warn)}
+.empty{color:var(--mut);text-align:center;padding:26px 8px}
+details{margin-top:22px}
+summary{color:var(--mut);cursor:pointer;padding:6px 0}
+.hide{display:none}
+@media(prefers-reduced-motion:no-preference){.paper{transition:opacity .2s}}
+</style>
+</head>
+<body>
+<main>
+<h1>Tickets para facturar</h1>
+<p class="sub">Fotografía el ticket al recibirlo. Todo se guarda solo en este teléfono.</p>
+
+<button id="nuevo">Fotografiar ticket</button>
+<input id="foto" type="file" accept="image/*" capture="environment" class="hide">
+
+<section id="editor" class="paper edit hide">
+  <div id="thumbs" class="thumbs"></div>
+  <p id="estado" class="msg"></p>
+  <div class="row"><button class="sec mini" id="otra">Agregar otra foto</button><button class="sec mini" id="leer">Leer de nuevo</button></div>
+  <label for="comercio">Comercio</label>
+  <input id="comercio" list="comercios" autocomplete="off"><datalist id="comercios"><option>Liverpool<option>OXXO<option>Starbucks<option>Tim Hortons</datalist>
+  <div class="row">
+    <div><label for="fecha">Fecha</label><input id="fecha" type="date"></div>
+    <div><label for="total">Total</label><input id="total" inputmode="decimal" placeholder="0.00"></div>
+  </div>
+  <label for="codigo">Código de facturación</label>
+  <input id="codigo" class="code" autocapitalize="characters" autocomplete="off" spellcheck="false">
+  <div class="row">
+    <div><label for="folio">Folio (opcional)</label><input id="folio" autocomplete="off"></div>
+    <div><label for="sucursal">Sucursal (opcional)</label><input id="sucursal" autocomplete="off"></div>
+  </div>
+  <p class="msg">Revisa el código letra por letra contra el ticket: la I y el 1, o la Q y el 0, se confunden.</p>
+  <div class="row"><button id="cancelar" class="sec">Descartar</button><button id="guardar">Guardar ticket</button></div>
+</section>
+
+<h2 style="font-size:17px;margin:26px 0 0">Guardados</h2>
+<div id="lista"></div>
+<div class="row"><button class="sec" id="exportar">Enviar a mi laptop</button></div>
+<p class="msg">Genera el archivo tickets.json con los pendientes. Compártelo por AirDrop o guárdalo en iCloud Drive.</p>
+
+<details>
+<summary>Ajustes de lectura</summary>
+<label for="clave">Clave de la API de Anthropic (opcional)</label>
+<input id="clave" type="password" autocomplete="off" placeholder="sk-ant-…">
+<p class="msg">Con clave, Claude lee mucho mejor el ticket, pero la foto se envía a Anthropic. Sin clave, la lectura se hace en el teléfono (menos precisa). La clave queda solo en este dispositivo.</p>
+<div class="row"><button class="sec" id="guardaClave">Guardar ajuste</button></div>
+<div class="row"><button class="danger" id="facturados">Marcar todos como facturados</button></div>
+</details>
+</main>
+
+<script>
+const MODEL='claude-sonnet-5-5';
+const $=s=>document.querySelector(s);
+const db=new Promise((ok,no)=>{const r=indexedDB.open('tickets',1);r.onupgradeneeded=()=>r.result.createObjectStore('t',{keyPath:'id'});r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});
+const tx=async(m,f)=>{const d=await db;return new Promise((ok,no)=>{const t=d.transaction('t',m);const q=f(t.objectStore('t'));t.oncomplete=()=>ok(q&&q.result);t.onerror=()=>no(t.error)})};
+const all=()=>tx('readonly',s=>s.getAll()),put=r=>tx('readwrite',s=>s.put(r)),del=id=>tx('readwrite',s=>s.delete(id));
+const getKey=()=>{try{return localStorage.getItem('clave')||''}catch(e){return ''}};
+let fotos=[];
+
+/* ---------- lectura de tickets ---------- */
+const MES={ENE:1,FEB:2,MAR:3,ABR:4,MAY:5,JUN:6,JUL:7,AGO:8,SEP:9,SET:9,OCT:10,NOV:11,DIC:12};
+function parsear(texto){
+  const t=texto.toUpperCase(),r={};
+  const c=t.match(/LIVERPOOL|OXXO|STARBUCKS|TIM HORTON/);
+  if(c)r.comercio={'LIVERPOOL':'Liverpool','OXXO':'OXXO','STARBUCKS':'Starbucks','TIM HORTON':'Tim Hortons'}[c[0]];
+  let m=t.match(/(\d{1,2})[\/\-. ]([A-Z]{3})[\/\-. ](\d{4})/);
+  if(m&&MES[m[2]])r.fecha=`${m[3]}-${String(MES[m[2]]).padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  else if((m=t.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/)))r.fecha=`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  m=t.match(/TOTAL[^0-9\n]{0,20}([\d,]+\.\d{2})/);if(m)r.total=m[1].replace(/,/g,'');
+  m=t.match(/\b([A-Z0-9]{5})\s+([A-Z0-9]{5})\s+([A-Z0-9]{5})\s+([A-Z0-9]{5})\b/);if(m)r.codigo_facturacion=m.slice(1,5).join(' ');
+  return r;
+}
+async function leerOCR(urls){
+  if(!window.Tesseract)await new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';s.onload=ok;s.onerror=()=>no(new Error('No pude cargar el lector (¿hay internet?)'));document.head.appendChild(s)});
+  let texto='';
+  for(const u of urls){const {data}=await Tesseract.recognize(u,'spa');texto+='\n'+data.text}
+  return parsear(texto);
+}
+async function leerClaude(urls,clave){
+  const content=urls.map(u=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:u.split(',')[1]}}));
+  content.push({type:'text',text:'Lee este ticket de compra mexicano (puede venir en una o dos fotos). Responde SOLO un JSON con estas llaves: comercio (Liverpool, OXXO, Starbucks, Tim Hortons u otro), fecha (YYYY-MM-DD), hora (HH:MM), sucursal, folio, total (número con centavos, sin símbolo), codigo_facturacion (el código, folio o ID para facturar tal cual aparece, con espacios). Usa "" si algo no aparece. No inventes datos.'});
+  const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':clave,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:MODEL,max_tokens:600,messages:[{role:'user',content}]})});
+  const j=await r.json();
+  if(!r.ok)throw new Error(j.error?.message||'Error de la API');
+  const txt=j.content.map(b=>b.text||'').join('').replace(/```json|```/g,'').trim();
+  return JSON.parse(txt);
+}
+async function leer(){
+  if(!fotos.length)return;
+  const e=$('#estado');e.className='msg';e.textContent='Leyendo el ticket…';
+  $('#leer').disabled=true;
+  try{
+    const clave=getKey();
+    const r=clave?await leerClaude(fotos,clave):await leerOCR(fotos);
+    for(const k of ['comercio','fecha','total','codigo_facturacion','folio','sucursal']){
+      const campo=k==='codigo_facturacion'?'codigo':k;
+      if(r[k])$('#'+campo).value=r[k];
+    }
+    e.textContent='Listo. Revisa los datos antes de guardar.';
+  }catch(err){e.className='msg err';e.textContent='No pude leer el ticket: '+err.message+'. Captura los datos a mano.'}
+  $('#leer').disabled=false;
+}
+
+/* ---------- fotos ---------- */
+function reducir(file){
+  return new Promise((ok,no)=>{const img=new Image(),u=URL.createObjectURL(file);
+    img.onload=()=>{const k=Math.min(1,1600/Math.max(img.width,img.height)),c=document.createElement('canvas');
+      c.width=img.width*k;c.height=img.height*k;c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      URL.revokeObjectURL(u);ok(c.toDataURL('image/jpeg',.8))};
+    img.onerror=()=>no(new Error('Imagen no válida'));img.src=u});
+}
+function pintaFotos(){$('#thumbs').innerHTML=fotos.map(f=>`<img src="${f}" alt="Foto del ticket">`).join('')}
+function abrirEditor(){$('#editor').classList.remove('hide');$('#nuevo').classList.add('hide')}
+function cerrarEditor(){fotos=[];$('#editor').classList.add('hide');$('#nuevo').classList.remove('hide');
+  for(const id of ['comercio','fecha','total','codigo','folio','sucursal'])$('#'+id).value='';$('#estado').textContent=''}
+$('#nuevo').onclick=()=>{fotos=[];$('#foto').click()};
+$('#otra').onclick=()=>$('#foto').click();
+$('#foto').onchange=async ev=>{
+  const f=ev.target.files[0];ev.target.value='';if(!f)return;
+  try{fotos.push(await reducir(f))}catch(err){return alert(err.message)}
+  pintaFotos();abrirEditor();leer();
+};
+$('#leer').onclick=leer;
+$('#cancelar').onclick=()=>{if(confirm('¿Descartar este ticket?'))cerrarEditor()};
+
+/* ---------- guardar y listar ---------- */
+const slug=s=>s.toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g,'');
+$('#guardar').onclick=async()=>{
+  const v=id=>$('#'+id).value.trim();
+  if(!v('comercio')||!v('fecha')||!v('total'))return alert('Faltan comercio, fecha y total.');
+  const total=parseFloat(v('total').replace(/,/g,''));
+  if(isNaN(total))return alert('El total no es un número.');
+  const id=`${slug(v('comercio'))}-${v('fecha').replace(/-/g,'')}-${v('folio')||Date.now().toString(36)}`;
+  await put({id,comercio:v('comercio'),fecha:v('fecha'),sucursal:v('sucursal'),folio:v('folio'),total,codigo_facturacion:v('codigo').toUpperCase(),estado:'pendiente',fotos});
+  cerrarEditor();pintaLista();
+};
+const dias=f=>Math.floor((Date.now()-new Date(f+'T12:00:00'))/864e5);
+async function pintaLista(){
+  const ts=(await all()).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  $('#lista').innerHTML=ts.length?ts.map(t=>{
+    const d=dias(t.fecha),pend=t.estado!=='facturado';
+    return `<div class="paper"><div class="item"><div><b>${esc(t.comercio)}</b><div class="meta">${t.fecha}${t.codigo_facturacion?'':' · sin código'}</div></div><div class="amt">$${t.total.toFixed(2)}</div></div>
+    <div class="row" style="align-items:center"><span class="chip ${pend?(d>20?'warn':''):'ok'}">${pend?`Pendiente · hace ${d} d`:'Facturado'}</span>
+    <span style="text-align:right">${pend?`<button class="mini sec" data-f="${t.id}">Ya facturado</button> `:''}<button class="mini danger" data-d="${t.id}">Borrar</button></span></div></div>`}).join('')
+  :'<p class="empty">Aún no hay tickets. Fotografía el primero cuando te lo den.</p>';
+}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+$('#lista').onclick=async ev=>{
+  const b=ev.target.closest('button');if(!b)return;
+  if(b.dataset.d&&confirm('¿Borrar este ticket?'))await del(b.dataset.d);
+  if(b.dataset.f){const t=(await all()).find(x=>x.id===b.dataset.f);t.estado='facturado';await put(t)}
+  pintaLista();
+};
+
+/* ---------- exportar y ajustes ---------- */
+$('#exportar').onclick=async()=>{
+  const ts=(await all()).filter(t=>t.estado!=='facturado').map(({fotos,estado,...r})=>({...r,hora:'',foto:''}));
+  if(!ts.length)return alert('No hay tickets pendientes.');
+  const f=new File([JSON.stringify(ts,null,2)],'tickets.json',{type:'application/json'});
+  if(navigator.canShare&&navigator.canShare({files:[f]})){try{await navigator.share({files:[f]})}catch(e){}}
+  else{const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download='tickets.json';a.click()}
+};
+$('#guardaClave').onclick=()=>{try{localStorage.setItem('clave',$('#clave').value.trim());alert('Ajuste guardado.')}catch(e){alert('No pude guardar el ajuste.')}};
+$('#facturados').onclick=async()=>{if(!confirm('¿Marcar todos los pendientes como facturados?'))return;for(const t of await all()){t.estado='facturado';await put(t)}pintaLista()};
+$('#clave').value=getKey();
+pintaLista();
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
